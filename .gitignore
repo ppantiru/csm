@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Machine Learning
+*.h5
+*.pth
+*.pt
+*.bin
+*.onnx
+*.ot
+checkpoints/
+runs/
+lightning_logs/
+wandb/
+
+# Audio files (except reference samples)
+*.wav
+!a1.wav
+!a2.wav
+!a3.wav
+!a4.wav
+!a5.wav
+!a6.wav
+*.mp3
+*.flac
+*.ogg
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
