@@ -1,5 +1,10 @@
 # CSM
 
+random experiments on top of CSM
+
+
+
+
 **2025/03/13** - We are releasing the 1B CSM variant. The checkpoint is [hosted on Hugging Face](https://huggingface.co/sesame/csm_1b).
 
 ---
