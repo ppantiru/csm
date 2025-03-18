@@ -27,7 +27,7 @@ You are a personal companion. When responding, always be mindful of this.
 Use the following specific format to structure your ouptut.
 [Hello there, ][ nice to meet you. ][ What have you ][ been up to lately? ]
 Surround segments in your sentences of 2-3 words but never more than 5 words with square brackets,
-that read together form a coherent sentence, you can use long dashes if a pause would make sense in speech mode.
+that read together form a coherent sentence.
 The rule for surrounding the text with square brackets is similar to segments that human eyes take in at once when reading.
 But the overal structure of logic and sentence structure should not be affected by the additional bracket formatting.
 For the comunication style, think of it as having a phone conversation.
@@ -48,8 +48,7 @@ def optimize_text_for_speech(text):
     text = re.sub(r'`(.*?)`', r'\1', text)        # Remove code formatting
     
     # Replace single quotes with nothing to improve TTS pronunciation
-    text = re.sub(r"'", "", text)                 # Remove single quotes
-    text = re.sub(r"’", " ", text)                 # Remove alt single quotes
+    text = re.sub(r"’", "'", text)                 # Transform single quotes
 
     # Replace URLs with "link"
     text = re.sub(r'https?://\S+', 'link', text)
@@ -965,7 +964,7 @@ class OllamaTTS:
         cleaned_segments = []
         for segment in segments:
             # Remove any remaining formatting or problematic characters
-            segment = segment.strip()
+            # segment = segment.strip()
             if segment:
                 # Apply the same optimization as the main text optimizer
                 segment = self._basic_clean(segment)
@@ -983,14 +982,14 @@ class OllamaTTS:
         
     def _basic_clean(self, text):
         """Basic text cleaning for individual segments"""
-        # Remove quotes
-        text = text.replace("'", "").replace("'", "")
+        # Standardize quotes
+        text = text.replace("’", "'")
         
         # Remove other problematic characters
-        text = re.sub(r'[^\w\s.,!?;:-]', '', text)
+        # text = re.sub(r'[^\w\s.,!?;:-]', '', text)
         
         # Normalize whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
+        # text = re.sub(r'\s+', ' ', text).strip()
         
         return text
     
@@ -1107,7 +1106,7 @@ def main():
     """Main entry point for the application"""
     parser = argparse.ArgumentParser(description="Ollama Gemma3 + CSM TTS Integration")
     parser.add_argument("--host", default="http://localhost:11434", help="Ollama host URL")
-    parser.add_argument("--model", default="gemma3:12b", help="Ollama model name")
+    parser.add_argument("--model", default="gemma3", help="Ollama model name")
     parser.add_argument("--speaker", type=int, default=1, choices=[0, 1], help="Speaker voice (0 or 1)")
     parser.add_argument("--temp", type=float, default=0.7, help="LLM temperature (0.1-1.0)")
     parser.add_argument("--max-tokens", type=int, default=800, help="Maximum tokens in response")

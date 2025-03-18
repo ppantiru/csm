@@ -41,7 +41,7 @@ segments = [
     for transcript, speaker, audio_path in zip(transcripts, speakers, audio_paths)
 ]
 audio = generator.generate(
-    text="Here is the Amortized training process. The backbone transformer models the zeroth level across all frames, while the decoder predicts the remaining N to 31 levels, but only for a random 1/16th of the frames. The top section highlights the specific frames modeled by the decoder for which it receives a loss.",
+    text="It says so right here in your personnel file: unlikable, liked by no one, a bitter unlikable owner whose passing shall not be mourned.",
     speaker=1,
     context=segments,
     max_audio_length_ms=30_000,
