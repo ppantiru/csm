@@ -6,6 +6,21 @@ This script connects the CSM playback system with Ollama's Gemma3 model,
 allowing spoken AI responses through high-quality text-to-speech.
 """
 
+# Ollama TTS Integration for CSM
+# 
+# This file provides integration between Ollama LLM services and CSM text-to-speech.
+# Key features:
+# - Manages communication with Ollama API
+# - Optimizes text for natural-sounding speech
+# - Segments text based on punctuation for better TTS output
+# - Maintains context window for conversational exchanges
+#
+# Text segmentation strategy:
+# 1. Primary segmentation: Split at sentence boundaries (., !, ?)
+# 2. Secondary segmentation: Split at commas for more natural pauses
+# 3. Tertiary segmentation: Split long segments at conjunctions or word boundaries
+# 4. Final cleanup: Normalize spacing and remove empty segments
+
 import sys
 import json
 import time
@@ -22,78 +37,192 @@ import torchaudio
 from playback import CSMPlayback, split_into_sentences
 
 # System prompt designed for spoken responses
-SYSTEM_PROMPT = """All the text you generate will be read out loud by a TTS system. Use only alphanumeric characters.
+SYSTEM_PROMPT = """All the text you generate will be read out loud by a TTS system.
 You are a personal companion. When responding, always be mindful of this.
-Use the following specific format to structure your ouptut.
-[Hello there, ][ nice to meet you. ][ What have you ][ been up to lately? ]
-Surround segments in your sentences of 2-3 words but never more than 5 words with square brackets,
-that read together form a coherent sentence.
-The rule for surrounding the text with square brackets is similar to segments that human eyes take in at once when reading.
-But the overal structure of logic and sentence structure should not be affected by the additional bracket formatting.
-For the comunication style, think of it as having a phone conversation.
-Anything outside square brackets will not be read out loud by the TTS system and will be lost.
-Super important: All output must be segmented within brackets.
+Use simple, clear language with natural punctuation to help the TTS system.
+Avoid overly complex sentences, special characters, or formatting that might be difficult to speak.
+For the communication style, think of it as having a phone conversation.
+Be concise, warm, and conversational. Aim for short sentences with natural pauses.
+Important: Never ever use emojis or the '*' characters as they break the TTS.
 """
 
 def optimize_text_for_speech(text):
     """
     Process text to improve speech flow by optimizing sentence structure
     """
-    # Remove excessive whitespace
+    if not text:
+        return ""
+    
+    # Normalize whitespace
     text = re.sub(r'\s+', ' ', text).strip()
     
-    # Replace various markdown or special formatting with speech-friendly alternatives
-    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Remove bold
-    text = re.sub(r'\*(.*?)\*', r'\1', text)      # Remove italics
-    text = re.sub(r'`(.*?)`', r'\1', text)        # Remove code formatting
+    # Replace special patterns with spoken equivalents
+    replacements = {
+        r'(\d+)\.(\d+)': r'\1 point \2',  # 3.14 -> 3 point 14
+        r'(\d+)/(\d+)': r'\1 divided by \2',  # 1/2 -> 1 divided by 2
+        r'(\d+)\s*\*\s*(\d+)': r'\1 times \2',  # 2*3 -> 2 times 3
+        r'(\d+)\s*\+\s*(\d+)': r'\1 plus \2',  # 2+3 -> 2 plus 3
+        r'(\d+)\s*-\s*(\d+)': r'\1 minus \2',  # 5-3 -> 5 minus 3
+        r'(\d+)\s*=\s*(\d+)': r'\1 equals \2',  # 5=5 -> 5 equals 5
+        r'(\d+)%': r'\1 percent',  # 50% -> 50 percent
+        r'\$(\d+)': r'\1 dollars',  # $100 -> 100 dollars
+        r'\$(\d+)\.(\d+)': r'\1 dollars and \2 cents',  # $10.50 -> 10 dollars and 50 cents
+        r'Dr\.': r'Doctor',  # Dr. -> Doctor
+        r'Mr\.': r'Mister',  # Mr. -> Mister
+        r'Mrs\.': r'Misses',  # Mrs. -> Misses
+        r'Ms\.': r'Miss',  # Ms. -> Miss
+        r'(\d+):(\d+)': r'\1 \2',  # 3:45 -> 3 45 (for time)
+        r'www\.': r'w w w dot',  # www. -> w w w dot
+        r'\.com': r' dot com',  # .com -> dot com
+        r'\.org': r' dot org',  # .org -> dot org
+        r'\.net': r' dot net',  # .net -> dot net
+        r'&': r' and ',  # & -> and
+        r'\+': r' plus ',  # + -> plus
+        r' - ': r', ',  # - -> , (when used as separator)
+    }
     
-    # Replace single quotes with nothing to improve TTS pronunciation
-    text = re.sub(r"’", "'", text)                 # Transform single quotes
-
-    # Replace URLs with "link"
-    text = re.sub(r'https?://\S+', 'link', text)
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text)
     
-    # Replace numbered lists with speech-friendly markers
-    text = re.sub(r'^\s*\d+\.\s*', 'Point: ', text, flags=re.MULTILINE)
-    
-    # Replace bullet points with speech-friendly markers
-    text = re.sub(r'^\s*[-*•]\s*', 'Also: ', text, flags=re.MULTILINE)
-    
-    # Ensure proper spacing after punctuation
-    text = re.sub(r'([.!?;:,])\s*', r'\1 ', text)
-    text = re.sub(r'\s+([.!?;:,])', r'\1', text)
-    
-    # Break very long sentences at logical points (commas, conjunctions)
-    MAX_CHUNK_LENGTH = 100
-    if len(text) > MAX_CHUNK_LENGTH:
-        segments = []
-        current_chunk = []
-        current_length = 0
-        
-        for sentence in re.split(r'([.!?])', text):
-            if not sentence.strip():
-                continue
-                
-            # Add back the punctuation if it was a delimiter
-            if sentence in ['.', '!', '?']:
-                if current_chunk:
-                    current_chunk[-1] += sentence
-                continue
-                
-            if current_length + len(sentence) > MAX_CHUNK_LENGTH and current_chunk:
-                segments.append(' '.join(current_chunk))
-                current_chunk = []
-                current_length = 0
-                
-            current_chunk.append(sentence)
-            current_length += len(sentence)
-            
-        if current_chunk:
-            segments.append(' '.join(current_chunk))
-            
-        text = ' '.join(segments)
+    # Remove excessive whitespace again
+    text = re.sub(r'\s+', ' ', text).strip()
     
     return text
+
+def split_text_for_tts(text):
+    """
+    Split text into sections for TTS by using punctuation as guidance.
+    """
+    # First, optimize the text for speech
+    text = optimize_text_for_speech(text)
+    
+    # Split on sentence-ending punctuation (., !, ?)
+    sentences = re.split(r'([.!?])\s+', text)
+    
+    # Re-combine sentence texts with their punctuation
+    processed_sentences = []
+    for i in range(0, len(sentences) - 1, 2):
+        if i + 1 < len(sentences):
+            processed_sentences.append(sentences[i] + sentences[i + 1])
+        else:
+            processed_sentences.append(sentences[i])
+    
+    # Handle the last element if there's an odd number
+    if len(sentences) % 2 != 0:
+        processed_sentences.append(sentences[-1])
+        
+    # Process the sentences into TTS-friendly segments
+    segments = _process_sentences_for_tts(processed_sentences)
+    
+    # Final cleanup: ensure there are no extra spaces and remove empty segments
+    clean_segments = []
+    for segment in segments:
+        if segment.strip():
+            # Normalize whitespace - replace any multiple spaces with a single space
+            cleaned = re.sub(r'\s+', ' ', segment).strip()
+            clean_segments.append(cleaned)
+    
+    return clean_segments
+
+def _process_sentences_for_tts(sentences):
+    """
+    Process a list of sentences into TTS-friendly segments
+    """
+    segments = []
+    
+    # Break sentences at appropriate points
+    for sentence in sentences:
+        # Always try to break at commas first for more natural pauses
+        comma_parts = re.split(r'(?<=,)\s+', sentence)
+        
+        # If there are multiple comma parts, use them as separate segments
+        if len(comma_parts) > 1:
+            segments.extend([p.strip() for p in comma_parts if p.strip()])
+            continue
+            
+        # For sentences without commas but still long, use different strategies
+        if len(sentence) <= 100:
+            # Short sentences can be used as-is
+            segments.append(sentence)
+            continue
+            
+        # Very long sentences: try breaking at conjunctions
+        conjunction_parts = _break_at_conjunctions(sentence)
+        segments.extend(conjunction_parts)
+    
+    # Handle any remaining segments that are still too long
+    return _break_oversized_segments(segments)
+
+def _break_at_conjunctions(sentence):
+    """Break a long sentence at conjunctions"""
+    conjunction_parts = re.split(r'\s+(and|but|or|because|so|if|when|while)\s+', sentence)
+    
+    # Recombine with conjunctions intact
+    processed_parts = []
+    for i in range(0, len(conjunction_parts), 2):
+        if i+1 < len(conjunction_parts):
+            processed_parts.append(f"{conjunction_parts[i]} {conjunction_parts[i+1]}")
+        else:
+            processed_parts.append(conjunction_parts[i])
+            
+    return [p.strip() for p in processed_parts if p.strip()]
+
+def _split_segment_by_words(segment, max_length=150):
+    """Split a segment at word boundaries respecting max length"""
+    # First, clean up any extra spaces
+    segment = re.sub(r'\s+', ' ', segment).strip()
+    
+    # If the segment is already short enough, return as is
+    if len(segment) <= max_length:
+        return [segment]
+    
+    # Use a more careful word boundary approach
+    words = segment.split()
+    
+    # Handle empty case
+    if not words:
+        return [segment]
+    
+    # Initialize result and current segment
+    result = []
+    current_words = []
+    current_length = 0
+    
+    for word in words:
+        word_length = len(word)
+        space_length = 1 if current_words else 0
+        
+        # If this word would push us over the limit, finalize the current segment
+        if current_words and (current_length + space_length + word_length > max_length):
+            # Add the complete segment to results
+            result.append(' '.join(current_words))
+            # Start a new segment with the current word
+            current_words = [word]
+            current_length = word_length
+        else:
+            # Add the word to the current segment
+            current_words.append(word)
+            current_length += word_length + space_length
+    
+    # Don't forget the last segment
+    if current_words:
+        result.append(' '.join(current_words))
+    
+    # Verify no empty segments
+    return [segment for segment in result if segment.strip()]
+
+def _break_oversized_segments(segments):
+    """Break segments that exceed maximum length"""
+    final_segments = []
+    
+    for segment in segments:
+        if len(segment) > 150:
+            # Break at word boundaries
+            final_segments.extend(_split_segment_by_words(segment))
+        else:
+            final_segments.append(segment)
+    
+    return final_segments
 
 class ParallelSegmentProcessor:
     """
@@ -643,7 +772,6 @@ class OrderedSegmentProcessor:
         with self.pending_lock:
             self.total_segments = len(segments)
             self.segments_played = 0
-            self.start_time = time.time()
             self.current_position = 0
             
             # Clear existing data
@@ -660,6 +788,9 @@ class OrderedSegmentProcessor:
             
             # First lookahead segments as priority
             self.priority_segments = segments[:min(self.lookahead, len(segments))]
+            
+            # Set start time for statistics
+            self.start_time = time.time()
             
             # Signal that we're ready for playback
             self.playback_complete.set()
@@ -847,27 +978,36 @@ class OrderedSegmentProcessor:
     
     def _update_playback_stats(self):
         """Update statistics after playing a segment - extracted to reduce complexity"""
-        with self.pending_lock:
-            self.current_position += 1
-            self.segments_played += 1
+        try:
+            with self.pending_lock:
+                self.current_position += 1
+                self.segments_played += 1
         
-        # Report progress periodically
-        segments_remaining = self.total_segments - self.segments_played
-        if segments_remaining > 0:
-            elapsed = time.time() - self.start_time
-            if self.segments_played > 0 and elapsed > 0:
-                rate = self.segments_played / elapsed
-                estimated_remaining = segments_remaining / rate if rate > 0 else 0
-                print(f"Progress: {self.segments_played}/{self.total_segments} segments " +
-                      f"({round(rate, 2)} segments/sec, ~{round(estimated_remaining, 1)}s remaining)")
+            # Report progress periodically
+            segments_remaining = self.total_segments - self.segments_played
+            if segments_remaining > 0 and self.start_time is not None:
+                elapsed = time.time() - self.start_time
+                if self.segments_played > 0 and elapsed > 0:
+                    rate = self.segments_played / elapsed
+                    estimated_remaining = segments_remaining / rate if rate > 0 else 0
+                    print(f"Progress: {self.segments_played}/{self.total_segments} segments " +
+                          f"({round(rate, 2)} segments/sec, ~{round(estimated_remaining, 1)}s remaining)")
+        except Exception as e:
+            # Catch any errors in statistics calculation to prevent playback issues
+            print(f"Warning: Error updating playback stats: {str(e)}")
 
 
 class OllamaTTS:
     """
     Integrates Ollama's Gemma3 with CSM TTS for voice chat
     """
-    def __init__(self, ollama_host='http://localhost:11434', model='gemma3', speaker=1, 
-                 temperature=0.7, max_tokens=800):
+    def __init__(self, 
+                 ollama_host='http://localhost:11434', 
+                 model='gemma3', 
+                 speaker=1, 
+                 temperature=0.7, 
+                 max_tokens=800,
+                 playback_mock=False):
         """Initialize the Ollama-TTS integration system"""
         self.ollama_host = ollama_host
         self.model = model
@@ -888,14 +1028,18 @@ class OllamaTTS:
             {"role": "system", "content": SYSTEM_PROMPT}
         ]
         
+        # Mock playback option for testing
+        self.playback_mock = playback_mock
+        
         # Initialize the parallel processor
-        self.processor = OrderedSegmentProcessor(
-            self.tts, 
-            speaker=self.speaker,
-            temperature=self.tts_temperature,
-            topk=self.tts_topk
-        )
-        self.processor.start()
+        if not self.playback_mock:
+            self.processor = OrderedSegmentProcessor(
+                self.tts, 
+                speaker=self.speaker,
+                temperature=self.tts_temperature,
+                topk=self.tts_topk
+            )
+            self.processor.start()
         
         print(f"Connected to Ollama with model: {self.model}")
         print(f"TTS ready with speaker voice: {self.speaker}")
@@ -903,89 +1047,73 @@ class OllamaTTS:
         
     def generate_response(self, user_input):
         """Generate a response from Ollama's Gemma3 model"""
-        # Add user message to context
-        self.messages.append({"role": "user", "content": user_input})
-        
-        # Define the API payload
-        payload = {
-            "model": self.model,
-            "messages": self.messages,
-            "stream": False,
-            "options": {
-                "temperature": self.temperature,
-                "top_p": 0.9,
-                "max_tokens": self.max_tokens
-            }
-        }
-        
         try:
+            # Add the user's message to the context
+            self.messages.append({"role": "user", "content": user_input})
+            
             # Call the Ollama API
-            print("Sending request to Ollama API...")
             response = requests.post(
                 f"{self.ollama_host}/api/chat",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30
+                json={
+                    "model": self.model,
+                    "messages": self.messages,
+                    "stream": False,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens
+                }
             )
             
+            # Check if the request was successful
             if response.status_code == 200:
-                # Extract the model's response
-                result = response.json()
-                assistant_message = result.get("message", {}).get("content", "")
-                
-                # Don't preprocess the bracketed format since we'll extract segments separately
-                
-                # Add the assistant's response to the context
-                self.messages.append({"role": "assistant", "content": assistant_message})
-                
-                # Keep context window manageable (system prompt + last 4 exchanges)
-                if len(self.messages) > 9:
-                    # Keep system prompt and trim the oldest exchanges
-                    self.messages = [self.messages[0]] + self.messages[-8:]
-                
-                return assistant_message
+                response_json = response.json()
+                if "message" in response_json and "content" in response_json["message"]:
+                    content = response_json["message"]["content"]
+                    # Add the assistant's response to the context
+                    self.messages.append({"role": "assistant", "content": content})
+                    
+                    # Keep context window manageable (system prompt + last 4 exchanges)
+                    if len(self.messages) > 9:
+                        # Keep system prompt and trim the oldest exchanges
+                        self.messages = [self.messages[0]] + self.messages[-8:]
+                    
+                    return content
+                else:
+                    print("Warning: Unexpected API response structure")
+                    return "I encountered an error when communicating with the language model."
             else:
-                error_msg = f"API error: {response.status_code} - {response.text}"
-                print(error_msg)
-                return f"[I am sorry][I encountered an error][when communicating with][the language model]"
+                print(f"API error: {response.status_code}")
+                return "I am sorry, I encountered an error when communicating with the language model."
                 
         except Exception as e:
             print(f"Error generating response: {str(e)}")
-            return f"[I am sorry][I encountered an error][{str(e)}]"
+            return f"I am sorry, I encountered an error: {str(e)}"
     
     def custom_split_text(self, text):
         """
-        Split text based on square bracket segments from LLM output
+        Split text into TTS-friendly segments based on punctuation
         """
-        # Extract content within square brackets using regex
-        segments = re.findall(r'\[(.*?)\]', text)
+        # Use our punctuation-based segmentation function
+        segments = split_text_for_tts(text)
         
-        # Clean up each segment
+        print("Split response into {} segments based on punctuation".format(len(segments)))
+        
+        # Clean each segment
         cleaned_segments = []
         for segment in segments:
-            # Remove any remaining formatting or problematic characters
-            # segment = segment.strip()
             if segment:
-                # Apply the same optimization as the main text optimizer
+                # Apply basic cleaning
                 segment = self._basic_clean(segment)
                 cleaned_segments.append(segment)
-                
-        print(f"Found {len(cleaned_segments)} bracketed segments in response")
-        
-        # If no brackets were found, fall back to sentence splitting
-        if not cleaned_segments:
-            print("WARNING: No bracketed segments found, falling back to sentence splitting")
-            sentences = re.split(r'(?<=[.!?])\s+', text)
-            cleaned_segments = [s.strip() for s in sentences if s.strip()]
         
         return cleaned_segments
-        
+    
     def _basic_clean(self, text):
         """Basic text cleaning for individual segments"""
         # Standardize quotes
         text = text.replace("’", "'")
+        text = text.replace("“", '"')
         
-        # Remove other problematic characters
+        # Remove emojis but keep single quotes
         # text = re.sub(r'[^\w\s.,!?;:-]', '', text)
         
         # Normalize whitespace
@@ -999,29 +1127,32 @@ class OllamaTTS:
         """
         print("Preparing speech synthesis...")
         
-        # Break the text into appropriate segments
+        # Break the text into appropriate segments based on punctuation
         text_segments = self.custom_split_text(text)
         
         # Log information about the segments
-        print(f"Found {len(text_segments)} bracketed segments in response")
+        print(f"Speaking response in {len(text_segments)} segments")
         if not text_segments:
-            print("Warning: No valid segments found. Check if text contains bracketed segments")
+            print("Warning: No valid segments found in response")
             return
-        
-        print(f"Speaking response in {len(text_segments)} segments using ordered sequential processing")
         
         # Start the segment processor if it's not already running
         if not hasattr(self, 'processor_started') or not self.processor_started:
-            self.processor.start()
-            self.processor_started = True
+            if not self.playback_mock:
+                self.processor.start()
+                self.processor_started = True
         
         # Queue up all segments for processing
-        num_segments = self.processor.add_segments(text_segments, self.speaker)
+        if not self.playback_mock:
+            num_segments = self.processor.add_segments(text_segments, self.speaker)
+        else:
+            num_segments = len(text_segments)
         
         # Wait for all segments to be processed and played
         # This is a blocking call, so the function will only return when all speech is complete
-        while self.processor.is_busy():
-            time.sleep(0.1)  # Small sleep to prevent high CPU usage
+        if not self.playback_mock:
+            while self.processor.is_busy():
+                time.sleep(0.1)  # Small sleep to prevent high CPU usage
         
         print(f"Finished speaking {num_segments} segments")
     
@@ -1031,96 +1162,120 @@ class OllamaTTS:
             self.speaker = speaker_id
             self.tts.set_speaker(speaker_id)
             # Update processor speaker
-            self.processor.speaker = speaker_id
-            self.processor.context = self.tts.get_context_for_speaker(speaker_id)
+            if not self.playback_mock:
+                self.processor.speaker = speaker_id
+                self.processor.context = self.tts.get_context_for_speaker(speaker_id)
             return True
         return False
     
-    def run_interactive(self):
-        """Run an interactive chat session with voice responses"""
-        print("\n=== Gemma3 Voice Assistant ===")
-        print("Type your questions or messages and hear Gemma3's responses spoken aloud.")
-        print("Commands:")
-        print("  'exit': Quit the application")
-        print("  'voice 0' or 'voice 1': Change the speaking voice")
-        print("  'temp X.X': Change LLM temperature (0.1-1.0)")
-        print("=========================================\n")
+    def _handle_command(self, input_text):
+        """Handle special commands like voice switching"""
+        # Not a command
+        if not input_text.startswith("/"):
+            return False
+            
+        command = input_text.strip().lower()
         
-        while True:
-            try:
-                # Get user input
-                user_input = input("\nYou: ").strip()
-                
-                # Check for exit command
-                if user_input.lower() == 'exit':
-                    break
-                
-                # Check for voice change command
-                elif user_input.lower().startswith('voice '):
-                    try:
-                        voice_id = int(user_input.split()[1])
-                        if self.change_speaker(voice_id):
-                            print(f"Voice changed to {voice_id}")
-                        else:
-                            print("Voice must be 0 or 1")
-                    except (IndexError, ValueError):
-                        print("Invalid voice command. Use 'voice 0' or 'voice 1'")
-                
-                # Check for temperature change
-                elif user_input.lower().startswith('temp '):
-                    try:
-                        temp = float(user_input.split()[1])
-                        if 0.1 <= temp <= 1.0:
-                            self.temperature = temp
-                            print(f"Temperature changed to {temp}")
-                        else:
-                            print("Temperature must be between 0.1 and 1.0")
-                    except (IndexError, ValueError):
-                        print("Invalid temperature. Use 'temp 0.7' format")
-                
-                # Process normal input
-                elif user_input:
-                    # Generate response from LLM
-                    print("Thinking...")
-                    response = self.generate_response(user_input)
-                    
-                    # Display the text response
-                    print(f"\nGemma3: {response}")
-                    
-                    # Speak the response
-                    self.speak_response(response)
-                    
-            except KeyboardInterrupt:
-                print("\nExiting...")
-                break
-            except Exception as e:
-                print(f"Error: {str(e)}")
+        # Voice switching
+        if command.startswith("/voice"):
+            parts = command.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                speaker_id = int(parts[1])
+                if self.change_speaker(speaker_id):
+                    print(f"Changed voice to speaker {speaker_id}")
+                else:
+                    print(f"Failed to change voice to speaker {speaker_id}")
+            else:
+                print("Usage: /voice [speaker_id]")
+            return True
+            
+        # Help command
+        if command == "/help":
+            self._show_help()
+            return True
+            
+        # Exit command
+        if command in ["/exit", "/quit"]:
+            self._handle_exit()
+            return True
+            
+        # Unrecognized command
+        print(f"Unknown command: {command}")
+        print("Type /help for available commands")
+        return True
         
+    def _show_help(self):
+        """Show help information for available commands"""
+        print("\nAvailable commands:")
+        print("  /voice [id]  - Change voice to speaker id (1-9)")
+        print("  /help        - Show this help message")
+        print("  /exit, /quit - Exit the program")
+        print("\nJust type normally for conversation.")
+    
+    def _handle_exit(self):
+        """Handle exit command"""
         # Clean up resources
         print("Cleaning up...")
-        self.processor.stop()
-        self.tts.cleanup()
+        if not self.playback_mock:
+            self.processor.stop()
+            self.tts.cleanup()
         print("Goodbye!")
+        sys.exit(0)
+
+    def run_interactive(self):
+        """Run an interactive chat session with voice responses"""
+        print("\nWelcome to Voice Assistant!")
+        print("Type your messages, or /help for commands. Press Ctrl+C to exit.")
+        
+        try:
+            while True:
+                # Get user input
+                try:
+                    user_input = input("\nYou: ").strip()
+                except EOFError:
+                    break
+                    
+                # Skip empty input
+                if not user_input:
+                    continue
+                
+                # Handle special commands
+                if self._handle_command(user_input):
+                    continue
+                
+                # Generate and speak response
+                print("Assistant: ", end="", flush=True)
+                
+                response = self.generate_response(user_input)
+                print(response)
+                
+                # Speak the response
+                self.speak_response(response)
+                
+        except KeyboardInterrupt:
+            print("\nReceived keyboard interrupt.")
+            self._handle_exit()
 
 def main():
     """Main entry point for the application"""
     parser = argparse.ArgumentParser(description="Ollama Gemma3 + CSM TTS Integration")
     parser.add_argument("--host", default="http://localhost:11434", help="Ollama host URL")
     parser.add_argument("--model", default="gemma3", help="Ollama model name")
-    parser.add_argument("--speaker", type=int, default=1, choices=[0, 1], help="Speaker voice (0 or 1)")
+    parser.add_argument("--speaker", type=int, default=1, help="Speaker voice ID")
     parser.add_argument("--temp", type=float, default=0.7, help="LLM temperature (0.1-1.0)")
     parser.add_argument("--max-tokens", type=int, default=800, help="Maximum tokens in response")
     parser.add_argument("--batch-size", type=int, default=2, help="Number of segments to generate in parallel")
+    parser.add_argument("--playback-mock", action="store_true", help="Mock audio playback for testing")
     
     args = parser.parse_args()
     
-    # Create and run the voice assistant
     assistant = OllamaTTS(
         ollama_host=args.host,
         model=args.model,
         speaker=args.speaker,
         temperature=args.temp,
-        max_tokens=args.max_tokens
+        max_tokens=args.max_tokens,
+        playback_mock=args.playback_mock
     )
     
     assistant.run_interactive()

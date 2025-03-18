@@ -6,7 +6,6 @@ that accepts user text inputs and plays them back through audio with low latency
 """
 
 import os
-import sys
 import torch
 import time
 import tempfile
@@ -15,7 +14,6 @@ import torchaudio
 import re
 import threading
 import queue
-import concurrent.futures
 from generator import load_csm_1b, Segment
 
 
