@@ -136,7 +136,7 @@ class Model(
         input_pos: torch.Tensor,
         temperature: float,
         topk: int,
-    ):
+    ) -> torch.Tensor:
         """
         Args:
             tokens: (batch_size, seq_len, audio_num_codebooks+1)
@@ -166,25 +166,20 @@ class Model(
         curr_sample = c0_sample.clone()
         curr_pos = torch.arange(0, curr_h.size(1), device=curr_h.device).unsqueeze(0).repeat(curr_h.size(0), 1)
 
-        # Define compiled decoder function for faster generation
-        @torch.compile
-        def decoder(_proj, _pos, _mask):
-            return self.decoder(_proj, input_pos=_pos, mask=_mask)
-
         # Decoder caches must be reset every frame.
         self.decoder.reset_caches()
         for i in range(1, self.config.audio_num_codebooks):
             curr_decoder_mask = _index_causal_mask(self.decoder_causal_mask, curr_pos)
-            proj = self.projection(curr_h)
-            decoder_h = decoder(proj, curr_pos, curr_decoder_mask).to(dtype=dtype)
+            decoder_h = self.decoder(self.projection(curr_h), input_pos=curr_pos, mask=curr_decoder_mask).to(
+                dtype=dtype
+            )
+            ci_logits = torch.mm(decoder_h[:, -1, :], self.audio_head[i - 1])
+            ci_sample = sample_topk(ci_logits, topk, temperature)
+            ci_embed = self._embed_audio(i, ci_sample)
 
-            ci_logits = torch.mm(decoder_h[:, -1, :], self.audio_head[i - 1]) # [1, 2051]
-            ci_sample = sample_topk(ci_logits, topk, temperature)             # [1, 1]
-            ci_embed = self._embed_audio(i, ci_sample)                        # [1, 1, 2048]
-
-            curr_h = ci_embed                                        # [1, 1, 2048]
-            curr_sample = torch.cat([curr_sample, ci_sample], dim=1) # [1, i_CODEBOOK]
-            curr_pos = curr_pos[:, -1:] + 1                          # [1, 1]
+            curr_h = ci_embed
+            curr_sample = torch.cat([curr_sample, ci_sample], dim=1)
+            curr_pos = curr_pos[:, -1:] + 1
 
         return curr_sample
 

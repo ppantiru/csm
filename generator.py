@@ -166,6 +166,9 @@ class Generator:
 def load_csm_1b(device: str = "cuda") -> Generator:
     model = Model.from_pretrained("sesame/csm-1b")
     model.to(device=device, dtype=torch.bfloat16)
+    
+    # Apply torch.compile to the decoder for faster generation
+    model.decoder = torch.compile(model.decoder, fullgraph=True, mode='reduce-overhead')
 
     generator = Generator(model)
     return generator
